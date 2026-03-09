@@ -78,7 +78,7 @@ fn from_repr_non_contiguous_discriminants() {
 fn via_roundtrip_all_variants() {
     for mode in [SensorMode::Off, SensorMode::Idle, SensorMode::Active, SensorMode::Error] {
         let s = SensorConfig { mode, gain: 0 };
-        assert_eq!(SensorConfig::decode(&s.encode()).mode, mode, "{mode:?} failed roundtrip");
+        assert_eq!(SensorConfig::unpack(&s.pack()).mode, mode, "{mode:?} failed roundtrip");
     }
 }
 
@@ -90,7 +90,7 @@ fn via_wire_value_matches_discriminant() {
         (SensorMode::Active, 2),
         (SensorMode::Error,  3),
     ] {
-        let wire = SensorConfig { mode, gain: 0 }.encode()[0] & 0x03;
+        let wire = SensorConfig { mode, gain: 0 }.pack()[0] & 0x03;
         assert_eq!(wire, disc, "{mode:?}: expected disc {disc}, got {wire}");
     }
 }
@@ -99,7 +99,7 @@ fn via_wire_value_matches_discriminant() {
 fn via_does_not_bleed_into_adjacent_field() {
     // mode=Error(3) should not corrupt gain
     let s = SensorConfig { mode: SensorMode::Error, gain: 0b111111 };
-    let d = SensorConfig::decode(&s.encode());
+    let d = SensorConfig::unpack(&s.pack());
     assert_eq!(d.mode, SensorMode::Error);
     assert_eq!(d.gain, 0b111111);
 }
@@ -107,7 +107,7 @@ fn via_does_not_bleed_into_adjacent_field() {
 #[test]
 fn via_adjacent_field_does_not_bleed_into_mode() {
     let s = SensorConfig { mode: SensorMode::Off, gain: 0b111111 };
-    let d = SensorConfig::decode(&s.encode());
+    let d = SensorConfig::unpack(&s.pack());
     assert_eq!(d.mode, SensorMode::Off);
     assert_eq!(d.gain, 0b111111);
 }
@@ -116,14 +116,14 @@ fn via_adjacent_field_does_not_bleed_into_mode() {
 fn via_exact_wire_layout() {
     // mode=Active(2)=0b10, gain=0b101010 → byte = 0b10_10_10_10 = 0xAA
     let s = SensorConfig { mode: SensorMode::Active, gain: 0b101010 };
-    assert_eq!(s.encode()[0], 0b1010_1010);
+    assert_eq!(s.pack()[0], 0b1010_1010);
 }
 
 #[test]
 fn via_non_contiguous_roundtrip() {
     for priority in [Priority::Low, Priority::Medium, Priority::High] {
         let s = PriorityPacket { priority, value: 0xBE };
-        let d = PriorityPacket::decode(&s.encode());
+        let d = PriorityPacket::unpack(&s.pack());
         assert_eq!(d.priority, priority, "{priority:?} failed roundtrip");
         assert_eq!(d.value, 0xBE);
     }

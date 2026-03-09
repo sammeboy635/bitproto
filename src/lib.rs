@@ -717,13 +717,13 @@ fn impl_bitpack(ast: &DeriveInput) -> syn::Result<TS2> {
 
     Ok(quote! {
         impl #name {
-            pub fn encode(&self) -> ::std::vec::Vec<u8> {
+            pub fn pack(&self) -> ::std::vec::Vec<u8> {
                 let mut _buf = vec![0u8; #size];
                 #(#enc_stmts)*
                 _buf
             }
 
-            pub fn decode(_buf: &[u8]) -> Self {
+            pub fn unpack(_buf: &[u8]) -> Self {
                 assert!(_buf.len() >= #size,
                     "buffer too short: need {} bytes, got {}", #size, _buf.len());
                 let mut _s = Self::default();

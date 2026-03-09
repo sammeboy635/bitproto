@@ -1,6 +1,6 @@
 # bitproto
 
-A Rust procedural macro library for binary protocol encoding and decoding. Derive `encode`/`decode` methods on structs with bit-level field control — endianness, bitfields, scaling, offsets, two's complement, and enum mapping.
+A Rust procedural macro library for binary protocol encoding and decoding. Derive `pack`/`unpack` methods on structs with bit-level field control — endianness, bitfields, scaling, offsets, two's complement, and enum mapping.
 
 Designed for parsing wire protocols like UBX (u-blox GNSS), but general enough for any fixed-size binary format.
 
@@ -44,8 +44,8 @@ struct MyMessage {
 }
 
 let msg = MyMessage { sequence: 1, flags: 0x0102, checksum: 0xFF };
-let bytes = msg.encode();
-let decoded = MyMessage::decode(&bytes);
+let bytes = msg.pack();
+let decoded = MyMessage::unpack(&bytes);
 assert_eq!(msg, decoded);
 ```
 
@@ -213,9 +213,9 @@ let msg = UbxEsfIns {
     x_ang_rate: 1_500,
     ..Default::default()
 };
-let bytes = msg.encode();
+let bytes = msg.pack();
 assert_eq!(bytes.len(), 36);
-assert_eq!(UbxEsfIns::decode(&bytes), msg);
+assert_eq!(UbxEsfIns::unpack(&bytes), msg);
 ```
 
 ## Attribute reference
@@ -254,12 +254,12 @@ assert_eq!(UbxEsfIns::decode(&bytes), msg);
 
 ```rust
 impl MyStruct {
-    pub fn encode(&self) -> Vec<u8>;
-    pub fn decode(buf: &[u8]) -> Self;  // requires Default
+    pub fn pack(&self) -> Vec<u8>;
+    pub fn unpack(buf: &[u8]) -> Self;  // requires Default
 }
 ```
 
-`decode` panics if `buf.len() < size`. Longer buffers are accepted.
+`unpack` panics if `buf.len() < size`. Longer buffers are accepted.
 
 ## Dependencies
 

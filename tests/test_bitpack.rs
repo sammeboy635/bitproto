@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn encode_is_36_bytes() {
-        assert_eq!(sample().encode().len(), 36);
+        assert_eq!(sample().pack().len(), 36);
     }
 
     // ── bitfield word: byte order and bit positions ───────────────────────────
@@ -138,7 +138,7 @@ mod tests {
     #[test]
     fn version_lives_in_byte_0() {
         let s = UbxEsfIns { version: 0x01, ..Default::default() };
-        let buf = s.encode();
+        let buf = s.pack();
         // bits 0-7 of the LE u32 at byte 0 → byte 0 of the buffer
         assert_eq!(buf[0], 0x01);
         assert_eq!(buf[1], 0x00); // no flags set
@@ -156,7 +156,7 @@ mod tests {
             z_accel_valid:    false,  // bit 13
             ..Default::default()
         };
-        let buf = s.encode();
+        let buf = s.pack();
         let word = u32::from_le_bytes(buf[0..4].try_into().unwrap());
 
         assert_eq!((word >>  8) & 1, 1, "x_ang_rate_valid @ bit 8");
@@ -172,7 +172,7 @@ mod tests {
         // The word attribute forces 4 bytes even though bits 0-13 could fit u16.
         // Bytes 2-3 of the LE word should be zero (no fields mapped there).
         let s = UbxEsfIns { version: 0x01, x_ang_rate_valid: true, ..Default::default() };
-        let buf = s.encode();
+        let buf = s.pack();
         assert_eq!(buf[2], 0x00, "byte 2 of the u32 bitfield should be zero");
         assert_eq!(buf[3], 0x00, "byte 3 of the u32 bitfield should be zero");
     }
@@ -180,14 +180,14 @@ mod tests {
     #[test]
     fn version_max_value() {
         let s = UbxEsfIns { version: 0xFF, ..Default::default() };
-        assert_eq!(UbxEsfIns::decode(&s.encode()).version, 0xFF);
+        assert_eq!(UbxEsfIns::unpack(&s.pack()).version, 0xFF);
     }
 
     #[test]
     fn version_does_not_bleed_into_flags() {
         // version is bits 0-7; flags start at bit 8 — they must be independent.
         let s = UbxEsfIns { version: 0xFF, x_ang_rate_valid: false, ..Default::default() };
-        let buf = s.encode();
+        let buf = s.pack();
         let word = u32::from_le_bytes(buf[0..4].try_into().unwrap());
         assert_eq!((word >> 8) & 1, 0, "flag bit 8 should be clear");
     }
@@ -197,14 +197,14 @@ mod tests {
     #[test]
     fn reserved0_copied_verbatim() {
         let s = sample();
-        let buf = s.encode();
+        let buf = s.pack();
         assert_eq!(&buf[4..8], &s.reserved0);
     }
 
     #[test]
     fn reserved0_roundtrip() {
         let s = sample();
-        assert_eq!(UbxEsfIns::decode(&s.encode()).reserved0, s.reserved0);
+        assert_eq!(UbxEsfIns::unpack(&s.pack()).reserved0, s.reserved0);
     }
 
     // ── scalar field byte order ───────────────────────────────────────────────
@@ -212,14 +212,14 @@ mod tests {
     #[test]
     fn i_tow_little_endian_layout() {
         let s = UbxEsfIns { i_tow: 0x1234_5678, ..Default::default() };
-        let buf = s.encode();
+        let buf = s.pack();
         assert_eq!(&buf[8..12], &[0x78u8, 0x56, 0x34, 0x12], "LE: LSB first");
     }
 
     #[test]
     fn i_tow_roundtrip() {
         let s = sample();
-        assert_eq!(UbxEsfIns::decode(&s.encode()).i_tow, s.i_tow);
+        assert_eq!(UbxEsfIns::unpack(&s.pack()).i_tow, s.i_tow);
     }
 
     // ── signed scalar fields ─────────────────────────────────────────────────
@@ -227,19 +227,19 @@ mod tests {
     #[test]
     fn negative_x_ang_rate_roundtrip() {
         let s = UbxEsfIns { x_ang_rate: -999_999, ..Default::default() };
-        assert_eq!(UbxEsfIns::decode(&s.encode()).x_ang_rate, -999_999);
+        assert_eq!(UbxEsfIns::unpack(&s.pack()).x_ang_rate, -999_999);
     }
 
     #[test]
     fn i32_min_roundtrip() {
         let s = UbxEsfIns { z_accel: i32::MIN, ..Default::default() };
-        assert_eq!(UbxEsfIns::decode(&s.encode()).z_accel, i32::MIN);
+        assert_eq!(UbxEsfIns::unpack(&s.pack()).z_accel, i32::MIN);
     }
 
     #[test]
     fn i32_max_roundtrip() {
         let s = UbxEsfIns { y_accel: i32::MAX, ..Default::default() };
-        assert_eq!(UbxEsfIns::decode(&s.encode()).y_accel, i32::MAX);
+        assert_eq!(UbxEsfIns::unpack(&s.pack()).y_accel, i32::MAX);
     }
 
     // ── full roundtrips ───────────────────────────────────────────────────────
@@ -247,15 +247,15 @@ mod tests {
     #[test]
     fn full_roundtrip() {
         let s = sample();
-        assert_eq!(UbxEsfIns::decode(&s.encode()), s);
+        assert_eq!(UbxEsfIns::unpack(&s.pack()), s);
     }
 
     #[test]
     fn all_zeros_default_roundtrip() {
         let s = UbxEsfIns::default();
-        let buf = s.encode();
+        let buf = s.pack();
         assert!(buf.iter().all(|&b| b == 0), "default should be all-zero bytes");
-        assert_eq!(UbxEsfIns::decode(&buf), s);
+        assert_eq!(UbxEsfIns::unpack(&buf), s);
     }
 
     #[test]
@@ -270,7 +270,7 @@ mod tests {
             z_accel_valid:    true,
             ..Default::default()
         };
-        assert_eq!(UbxEsfIns::decode(&s.encode()), s);
+        assert_eq!(UbxEsfIns::unpack(&s.pack()), s);
     }
 
     #[test]
@@ -286,7 +286,7 @@ mod tests {
             z_accel:    i32::MIN,
             ..Default::default()
         };
-        assert_eq!(UbxEsfIns::decode(&s.encode()), s);
+        assert_eq!(UbxEsfIns::unpack(&s.pack()), s);
     }
 
     // ── error conditions ──────────────────────────────────────────────────────
@@ -294,13 +294,13 @@ mod tests {
     #[test]
     #[should_panic(expected = "buffer too short")]
     fn decode_short_buffer_panics() {
-        UbxEsfIns::decode(&[0u8; 10]);
+        UbxEsfIns::unpack(&[0u8; 10]);
     }
 
     /// decode must accept buffers *longer* than 36 bytes.
     #[test]
     fn decode_accepts_longer_buffer() {
-        let _ = UbxEsfIns::decode(&vec![0u8; 100]);
+        let _ = UbxEsfIns::unpack(&vec![0u8; 100]);
     }
 
     // ── independence of fields ────────────────────────────────────────────────
@@ -319,7 +319,7 @@ mod tests {
         for (name, setter) in flags {
             let mut s = UbxEsfIns::default();
             setter(&mut s);
-            let d = UbxEsfIns::decode(&s.encode());
+            let d = UbxEsfIns::unpack(&s.pack());
             // The flag we set should be true
             let flag_val = match *name {
                 "x_ang_rate_valid" => d.x_ang_rate_valid,
@@ -347,7 +347,7 @@ mod tests {
     fn scalars_do_not_bleed_into_each_other() {
         // Set one scalar at a time, all others should remain zero after roundtrip.
         let s = UbxEsfIns { x_ang_rate: 42, ..Default::default() };
-        let d = UbxEsfIns::decode(&s.encode());
+        let d = UbxEsfIns::unpack(&s.pack());
         assert_eq!(d.x_ang_rate, 42);
         assert_eq!(d.y_ang_rate, 0);
         assert_eq!(d.z_ang_rate, 0);
@@ -392,7 +392,7 @@ mod reversed_tests {
     #[test]
     fn reversed_bits_roundtrip() {
         let s = ReversedExample { sensor_id: 0b1010, status: 0xA, threshold: 0x42 };
-        let d = ReversedExample::decode(&s.encode());
+        let d = ReversedExample::unpack(&s.pack());
         assert_eq!(d, s);
     }
 
@@ -401,7 +401,7 @@ mod reversed_tests {
         // sensor_id = 0b1010 (4 bits), reversed = 0b0101
         // stored in bits [0..3] of the word → wire byte 0 low nibble
         let s = ReversedExample { sensor_id: 0b1010, status: 0, threshold: 0 };
-        let buf = s.encode();
+        let buf = s.pack();
         let wire_id = buf[0] & 0b0000_1111; // low 4 bits
         let expected_reversed = (0b1010_u8).reverse_bits() >> 4; // reverse 8 bits, shift to 4-bit
         assert_eq!(wire_id, expected_reversed, "sensor_id should be bit-reversed on wire");
@@ -410,7 +410,7 @@ mod reversed_tests {
     #[test]
     fn normal_and_reversed_fields_independent() {
         let s = ReversedExample { sensor_id: 0, status: 0xF, threshold: 0 };
-        let d = ReversedExample::decode(&s.encode());
+        let d = ReversedExample::unpack(&s.pack());
         assert_eq!(d.status, 0xF);
         assert_eq!(d.sensor_id, 0);
     }
