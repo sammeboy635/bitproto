@@ -131,6 +131,34 @@ Fields with `skip` are ignored during encode/decode and left at their default va
 pub computed: u32,
 ```
 
+### Custom tail fields
+
+For variable-length tails (e.g. a `Vec` whose length is determined at runtime), supply `unpack` and `pack` functions. The struct `size` is the fixed header size; the custom functions handle everything after it.
+
+```rust
+fn unpack_sensors(buf: &[u8]) -> Vec<Sensor> {
+    buf.chunks_exact(4).map(Sensor::unpack).collect()
+}
+
+fn pack_sensors(sensors: &Vec<Sensor>) -> Vec<u8> {
+    sensors.iter().flat_map(|s| s.pack()).collect()
+}
+
+#[derive(BitPack, Debug, Default)]
+#[bitpack(size = 16, endian = "le")]   // fixed header is 16 bytes
+struct StatusMsg {
+    #[bitpack(byte = 0)]  pub i_tow:    u32,
+    #[bitpack(byte = 15)] pub num_sens: u8,
+    // No byte = needed — receives &buf[16..] on unpack, appends on pack
+    #[bitpack(unpack = "unpack_sensors", pack = "pack_sensors")]
+    pub sensors: Vec<Sensor>,
+}
+```
+
+- `unpack = "fn"`: signature `fn(&[u8]) -> T`, receives the buffer tail (`&buf[size..]`)
+- `pack = "fn"`: signature `fn(&T) -> Vec<u8>`, bytes are appended after the fixed header
+- Either can be omitted independently (unpack-only or pack-only)
+
 ### Enums with `FromRepr`
 
 Derive `From<ReprType>` for enums. Unknown values fall back to the `#[default]` variant (or the first variant).
@@ -242,6 +270,8 @@ assert_eq!(UbxEsfIns::unpack(&bytes), msg);
 | `offset = N` | Add N on decode, subtract N on encode |
 | `twos_comp` | Sign-extend bitfield using two's complement |
 | `via = "TYPE"` | Intermediate type for enum conversion (bitfields only) |
+| `unpack = "fn"` | Custom unpack for tail field: `fn(&[u8]) -> T`, receives `buf[size..]` |
+| `pack = "fn"` | Custom pack for tail field: `fn(&T) -> Vec<u8>`, bytes appended after header |
 
 ### Transformation order
 

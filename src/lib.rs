@@ -162,7 +162,7 @@ impl WordType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum FieldKind {
     Bitfield {
         lo: u32,
@@ -179,6 +179,13 @@ enum FieldKind {
     Raw {
         len: usize,
     },
+    /// Tail field handled by user-supplied functions.
+    /// `unpack_fn(&buf[fixed_size..]) -> T`
+    /// `pack_fn(&T) -> Vec<u8>` (bytes are appended after the fixed header)
+    Custom {
+        unpack_fn: Option<syn::Path>,
+        pack_fn: Option<syn::Path>,
+    },
     Skip,
 }
 
@@ -190,9 +197,6 @@ struct FieldInfo {
     offset: Option<i64>,
     scale: Option<f64>,
     twos_comp: bool,
-    /// Intermediate primitive type for enum fields, e.g. `via = "u8"`.
-    /// Generates `FieldType::from(_raw as ViaType)` on decode and
-    /// `self.field as ViaType as i64` on encode.
     via: Option<TS2>,
 }
 
@@ -276,6 +280,8 @@ fn parse_field_attrs(
     let mut scale: Option<f64> = None;
     let mut twos_comp = false;
     let mut via: Option<TS2> = None;
+    let mut custom_unpack: Option<syn::Path> = None;
+    let mut custom_pack: Option<syn::Path> = None;
 
     attr.parse_nested_meta(|m| {
         if m.path.is_ident("skip") {
@@ -319,6 +325,14 @@ fn parse_field_attrs(
             let lit: syn::LitStr = m.value()?.parse()?;
             let ident = proc_macro2::Ident::new(&lit.value(), lit.span());
             via = Some(quote!(#ident));
+        } else if m.path.is_ident("unpack") {
+            let lit: syn::LitStr = m.value()?.parse()?;
+            custom_unpack = Some(syn::parse_str(&lit.value())
+                .map_err(|e| m.error(e.to_string()))?);
+        } else if m.path.is_ident("pack") {
+            let lit: syn::LitStr = m.value()?.parse()?;
+            custom_pack = Some(syn::parse_str(&lit.value())
+                .map_err(|e| m.error(e.to_string()))?);
         } else {
             return Err(m.error("unknown field-level bitpack key"));
         }
@@ -331,6 +345,20 @@ fn parse_field_attrs(
             ty,
             byte: 0,
             kind: FieldKind::Skip,
+            offset: None,
+            scale: None,
+            twos_comp: false,
+            via: None,
+        });
+    }
+
+    // Custom tail field — no byte offset required.
+    if custom_unpack.is_some() || custom_pack.is_some() {
+        return Ok(FieldInfo {
+            ident,
+            ty,
+            byte: 0,
+            kind: FieldKind::Custom { unpack_fn: custom_unpack, pack_fn: custom_pack },
             offset: None,
             scale: None,
             twos_comp: false,
@@ -480,10 +508,27 @@ fn impl_bitpack(ast: &DeriveInput) -> syn::Result<TS2> {
     let mut emitted_groups: HashSet<usize> = HashSet::new();
     let mut enc_stmts: Vec<TS2> = Vec::new();
     let mut dec_stmts: Vec<TS2> = Vec::new();
+    // Statements for custom tail fields — applied after the fixed buffer.
+    let mut custom_enc_stmts: Vec<TS2> = Vec::new();
+    let mut custom_dec_stmts: Vec<TS2> = Vec::new();
 
     for fi in &fields {
         match &fi.kind {
             FieldKind::Skip => continue,
+
+            FieldKind::Custom { unpack_fn, pack_fn } => {
+                let ident = &fi.ident;
+                if let Some(f) = unpack_fn {
+                    custom_dec_stmts.push(quote! {
+                        _s.#ident = #f(&_buf[#size..]);
+                    });
+                }
+                if let Some(f) = pack_fn {
+                    custom_enc_stmts.push(quote! {
+                        _buf.extend_from_slice(&#f(&self.#ident));
+                    });
+                }
+            }
 
             FieldKind::Scalar { endian_override } => {
                 let ident = &fi.ident;
@@ -579,14 +624,12 @@ fn impl_bitpack(ast: &DeriveInput) -> syn::Result<TS2> {
                             let b = *bit as usize;
                             let mask_val = 1u64;
 
-                            // Encode
                             g_enc.push(quote! {
                                 if self.#gident as u64 != 0 {
                                     _w |= (#mask_val as #wt_ts) << #b;
                                 }
                             });
 
-                            // Decode (no offset/scale/twos_comp on single bit for simplicity)
                             if bool_field {
                                 g_dec.push(quote! {
                                     _s.#gident = (_w >> #b) & 1 != 0;
@@ -603,17 +646,15 @@ fn impl_bitpack(ast: &DeriveInput) -> syn::Result<TS2> {
                             let hi_val = *hi;
 
                             if lo_val < hi_val {
-                                // Normal LSB-first
                                 let len = (hi_val - lo_val) as u32;
                                 let mask = (1u64 << len) - 1;
                                 let lo_u = lo_val as usize;
 
-                                // ── Decode ───────────────────────────────────────
                                 let sign_extend = if gf.twos_comp {
                                     quote! {
                                         let sign_bit = 1i64 << (#len - 1);
                                         if _raw & sign_bit != 0 {
-                                            _raw |= -sign_bit << 1;  // sign extend
+                                            _raw |= -sign_bit << 1;
                                         }
                                     }
                                 } else {
@@ -649,7 +690,6 @@ fn impl_bitpack(ast: &DeriveInput) -> syn::Result<TS2> {
                                     #scale_dec
                                 });
 
-                                // ── Encode ───────────────────────────────────────
                                 let scale_enc = gf.scale.map(|s| {
                                     let div = 1.0 / s;
                                     quote! {
@@ -665,7 +705,6 @@ fn impl_bitpack(ast: &DeriveInput) -> syn::Result<TS2> {
                                 });
 
                                 let offset_enc = gf.offset.map(|o| quote!(_v_int -= #o;)).unwrap_or_default();
-
                                 let value_insert = quote!((_v_int as u64) & #mask);
 
                                 g_enc.push(quote! {
@@ -675,7 +714,7 @@ fn impl_bitpack(ast: &DeriveInput) -> syn::Result<TS2> {
                                     _w |= (_v << #lo_u) as #wt_ts;
                                 });
                             } else {
-                                // Reversed (MSB-first) ── simplified, no twos_comp/scale yet
+                                // Reversed (MSB-first)
                                 let len = (lo_val - hi_val + 1) as usize;
                                 let len32 = len as u32;
                                 let mask = (1u64 << len) - 1;
@@ -720,6 +759,7 @@ fn impl_bitpack(ast: &DeriveInput) -> syn::Result<TS2> {
             pub fn pack(&self) -> ::std::vec::Vec<u8> {
                 let mut _buf = vec![0u8; #size];
                 #(#enc_stmts)*
+                #(#custom_enc_stmts)*
                 _buf
             }
 
@@ -728,6 +768,7 @@ fn impl_bitpack(ast: &DeriveInput) -> syn::Result<TS2> {
                     "buffer too short: need {} bytes, got {}", #size, _buf.len());
                 let mut _s = Self::default();
                 #(#dec_stmts)*
+                #(#custom_dec_stmts)*
                 _s
             }
         }
